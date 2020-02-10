@@ -9,6 +9,7 @@ from skimage.io import imsave
 from utils import compute_gt_gradient, make_canvas_mask, numpy2tensor, laplacian_filter_tensor, \
                   MeanShift, Vgg16, gram_matrix
 import argparse
+torch.cuda.empty_cache()
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--source_file', type=str, default='data/1_source.png', help='path to the source image')
@@ -79,56 +80,56 @@ vgg = Vgg16().to(gpu_id)
 
 run = [0]
 while run[0] <= num_steps:
-    
+
     def closure():
         # Composite Foreground and Background to Make Blended Image
         blend_img = torch.zeros(target_img.shape).to(gpu_id)
-        blend_img = input_img*canvas_mask + target_img*(canvas_mask-1)*(-1) 
-        
+        blend_img = input_img*canvas_mask + target_img*(canvas_mask-1)*(-1)
+
         # Compute Laplacian Gradient of Blended Image
         pred_gradient = laplacian_filter_tensor(blend_img, gpu_id)
-        
+
         # Compute Gradient Loss
         grad_loss = 0
         for c in range(len(pred_gradient)):
             grad_loss += mse(pred_gradient[c], gt_gradient[c])
         grad_loss /= len(pred_gradient)
         grad_loss *= grad_weight
-        
+
         # Compute Style Loss
         target_features_style = vgg(mean_shift(target_img))
         target_gram_style = [gram_matrix(y) for y in target_features_style]
-        
+
         blend_features_style = vgg(mean_shift(input_img))
         blend_gram_style = [gram_matrix(y) for y in blend_features_style]
-        
+
         style_loss = 0
         for layer in range(len(blend_gram_style)):
             style_loss += mse(blend_gram_style[layer], target_gram_style[layer])
-        style_loss /= len(blend_gram_style)  
-        style_loss *= style_weight           
+        style_loss /= len(blend_gram_style)
+        style_loss *= style_weight
 
-        
+
         # Compute Content Loss
         blend_obj = blend_img[:,:,int(x_start-source_img.shape[2]*0.5):int(x_start+source_img.shape[2]*0.5), int(y_start-source_img.shape[3]*0.5):int(y_start+source_img.shape[3]*0.5)]
         source_object_features = vgg(mean_shift(source_img*mask_img))
         blend_object_features = vgg(mean_shift(blend_obj*mask_img))
         content_loss = content_weight * mse(blend_object_features.relu2_2, source_object_features.relu2_2)
         content_loss *= content_weight
-        
+
         # Compute TV Reg Loss
         tv_loss = torch.sum(torch.abs(blend_img[:, :, :, :-1] - blend_img[:, :, :, 1:])) + \
                    torch.sum(torch.abs(blend_img[:, :, :-1, :] - blend_img[:, :, 1:, :]))
         tv_loss *= tv_weight
-        
+
         # Compute Histogram Reg Loss
-        
-        
+
+
         # Compute Total Loss and Update Image
         loss = grad_loss + style_loss + content_loss + tv_loss
         optimizer.zero_grad()
         loss.backward()
-        
+
         # Print Loss
         if run[0] % 1 == 0:
             print("run {}:".format(run))
@@ -139,10 +140,10 @@ while run[0] <= num_steps:
                           tv_loss.item()
                           ))
             print()
-        
+
         run[0] += 1
         return loss
-    
+
     optimizer.step(closure)
 
 # clamp the pixels range into 0 ~ 255
@@ -150,7 +151,7 @@ input_img.data.clamp_(0, 255)
 
 # Make the Final Blended Image
 blend_img = torch.zeros(target_img.shape).to(gpu_id)
-blend_img = input_img*canvas_mask + target_img*(canvas_mask-1)*(-1) 
+blend_img = input_img*canvas_mask + target_img*(canvas_mask-1)*(-1)
 blend_img_np = blend_img.transpose(1,3).transpose(1,2).cpu().data.numpy()[0]
 
 # Save image from the first pass
@@ -184,10 +185,10 @@ optimizer = get_input_optimizer(first_pass_img)
 print('Optimizing...')
 run = [0]
 while run[0] <= num_steps:
-    
+
     def closure():
-        
-        # Compute Loss Loss    
+
+        # Compute Loss Loss
         target_features_style = vgg(mean_shift(target_img))
         target_gram_style = [gram_matrix(y) for y in target_features_style]
         blend_features_style = vgg(mean_shift(first_pass_img))
@@ -195,18 +196,18 @@ while run[0] <= num_steps:
         style_loss = 0
         for layer in range(len(blend_gram_style)):
             style_loss += mse(blend_gram_style[layer], target_gram_style[layer])
-        style_loss /= len(blend_gram_style)  
-        style_loss *= style_weight        
-        
+        style_loss /= len(blend_gram_style)
+        style_loss *= style_weight
+
         # Compute Content Loss
         content_features = vgg(mean_shift(first_pass_img))
         content_loss = content_weight * mse(blend_features_style.relu2_2, content_features.relu2_2)
-        
+
         # Compute Total Loss and Update Image
         loss = style_loss + content_loss
         optimizer.zero_grad()
         loss.backward()
-        
+
         # Print Loss
         if run[0] % 1 == 0:
             print("run {}:".format(run))
@@ -215,10 +216,10 @@ while run[0] <= num_steps:
                           content_loss.item()
                           ))
             print()
-        
+
         run[0] += 1
         return loss
-    
+
     optimizer.step(closure)
 
 # clamp the pixels range into 0 ~ 255
